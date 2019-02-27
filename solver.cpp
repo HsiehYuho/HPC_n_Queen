@@ -4,22 +4,53 @@
 /*************************** DECLARE YOUR HELPER FUNCTIONS HERE ************************/
 
 
-
+// Backtrack function for 
+void seq_solver_backtrack(std::vector<std::vector<unsigned int> >& all_solns,
+						  std::vector<unsigned int> &partial_soln,
+						  std::vector<unsigned int> &flags,
+						  unsigned int row, 
+						  unsigned int& n
+						  );
 
 
 /*************************** solver.h functions ************************/
 
 
 void seq_solver(unsigned int n, std::vector<std::vector<unsigned int> >& all_solns) {
-
-	// TODO: Implement this function
-
-
-
+	std::vector<unsigned int> partial_soln;
+	std::vector<unsigned int> flags (5*n-2 , 0);
+	seq_solver_backtrack(all_solns, partial_soln, flags, 0, n);
+	return;
 }
 
+// The flags[0] to flags[n-1] indicates if the column had a queen
+// The flags[n] to flags[3n-2], (2n - 1) 45 degree distinct lines
+// The flags[3n-1] to flags[5n-3], (2n - 1) 135 degree distinct lines 
+void seq_solver_backtrack(std::vector<std::vector<unsigned int> >& all_solns,
+						  std::vector<unsigned int> &partial_soln,
+						  std::vector<unsigned int> &flags,
+						  unsigned int row, 
+						  unsigned int& n
+						  ){
 
+	if(row == n){
+		std::vector<unsigned int> copy_soln;
+		copy_soln = partial_soln;
+		all_solns.push_back(copy_soln);
+		return;
+	}
 
+	for(int col = 0; col < n; col++){
+		if(flags[col] == 0 && flags[n + row + col] == 0 && flags[4 * n - 2 + col - row] == 0){
+			flags[col] = flags[n + row + col] = flags[4 * n - 2 + col - row] = 1;
+			partial_soln.push_back(col);
+			seq_solver_backtrack(all_solns, partial_soln, flags, row + 1, n);
+			partial_soln.pop_back();
+			flags[col] = flags[n + row + col] = flags[4 * n - 2 + col - row] = 0;
+		}
+	}
+
+}
 
 
 
