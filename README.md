@@ -38,3 +38,7 @@ For running on the PACE cluster, do:
 ```sh
 qsub -v p=<num_procs>,n=<number_of_queens>,k=<k> pbs_script.pbs
 ```
+
+## Report
+
+[Report](https://www.overleaf.com/project/5c755ab83058077d2df7059f)
