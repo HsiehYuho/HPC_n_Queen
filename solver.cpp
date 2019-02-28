@@ -40,7 +40,7 @@ void seq_solver_backtrack(std::vector<std::vector<unsigned int> >& all_solns,
 		return;
 	}
 
-	for(int col = 0; col < n; col++){
+	for(unsigned int col = 0; col < n; col++){
 		if(flags[col] == 0 && flags[n + row + col] == 0 && flags[4 * n - 2 + col - row] == 0){
 			flags[col] = flags[n + row + col] = flags[4 * n - 2 + col - row] = 1;
 			partial_soln.push_back(col);
