@@ -39,6 +39,12 @@ For running on the PACE cluster, do:
 qsub -v p=<num_procs>,n=<number_of_queens>,k=<k> pbs_script.pbs
 ```
 
+Submit multiple jobs using shell script:
+```sh
+chmod +x submit_queen.sh
+./submit_queen.sh
+```
+
 ## Report
 
 [Report](https://www.overleaf.com/project/5c755ab83058077d2df7059f)
