@@ -109,16 +109,13 @@ void nqueen_master(	unsigned int n,
 
 		// Generate the initial partial solutions and distribute
 		assignment.clear(); // reset
+		assignment.reserve(k);
 		std::fill(flags.begin(), flags.end(), 0); // reset
 		for (int dest = 1; dest < num_procs; dest++) {
 			if (!found_last) {
 				gen_success = generate_partial(assignment, flags, n, k);
 				if (gen_success) {
 					MPI_Send(&assignment[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
-					for (unsigned int xx = 0; xx < assignment.size(); xx++) {
-						std::cout << assignment[xx] << ' ';
-					}
-					std::cout << " sent initially" << std::endl;
 				} else {// there are fewer partial solutions than there are workers, none left
 					found_last = true;
 					MPI_Send(&kill[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
@@ -131,11 +128,6 @@ void nqueen_master(	unsigned int n,
 				skip = true;
 			}
 		}
-	}
-
-	std::cout << "value of assignment currently: " << std::endl;
-	for (unsigned int xx = 0; xx < assignment.size(); xx++) {
-		std::cout << assignment[xx] << ' ';
 	}
 
 	MPI_Status stat;
@@ -162,10 +154,6 @@ void nqueen_master(	unsigned int n,
 			if (!partials_surplus.empty()) { // check surplus first
 				temp = partials_surplus.back();
 				MPI_Send(&temp[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
-				for (unsigned int xx = 0; xx < assignment.size(); xx++) {
-					std::cout << assignment[xx] << ' ';
-				}
-				std::cout << " sent from surplus" << std::endl;
 				partials_surplus.pop_back();
 				continue;
 			}
@@ -173,10 +161,6 @@ void nqueen_master(	unsigned int n,
 				gen_success = generate_partial(assignment, flags, n, k);
 				if (gen_success) {
 					MPI_Send(&assignment[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
-					for (unsigned int xx = 0; xx < assignment.size(); xx++) {
-						std::cout << assignment[xx] << ' ';
-					}
-					std::cout << " sent from gen_partials" << std::endl;
 				} else {
 					MPI_Send(&kill[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
 					num_killed_workers++;
@@ -231,8 +215,6 @@ void nqueen_worker(	unsigned int n,
 			continue;
 		}
 
-//		std::cout << "processor " << proc_id << " has received and will complete assignment" << std::endl;
-
 		// Populate flags with known information from the assignment
 		int row = 0;
 		std::vector<unsigned int> flags (5*n-2 , 0);
@@ -250,11 +232,9 @@ void nqueen_worker(	unsigned int n,
 
 		// Tell P0 how many solutions to expect
 		int num_solns = all_solns.size();
-//		std::cout << "found " << num_solns << " solutions from processor " << proc_id << std::endl;
 		MPI_Send(&num_solns, 1, MPI_INT, 0, 111, MPI_COMM_WORLD);
 
 		// Send these solutions
-//		std::cout << "sending " << num_solns << " solutions from " << proc_id << std::endl;
 		for (int ii = 0; ii < num_solns; ii++) {
 			MPI_Send(&all_solns[ii][0], n, MPI_UNSIGNED, 0, 222, MPI_COMM_WORLD);
 		}
