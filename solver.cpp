@@ -82,17 +82,21 @@ void nqueen_master(	unsigned int n,
 	bool partials_remaining;
 
 	// Handle cases where excess workers can immediately be killed
-	if (k == 0) { // only 1 worker needed
+	if (k == 0 || k == n) { // only 1 worker needed || no workers needed
+		partials_remaining = false;
 		for (int ii = 1; ii < num_procs; ii++) {
 			// for k=0 case, P1 will interpret kill signal differently: will produce full solutions then terminate itself
 			MPI_Send(&kill[0], k, MPI_UNSIGNED, ii, 222, MPI_COMM_WORLD);
 			num_killed_workers++;
-			partials_remaining = false;
 		}
-		num_killed_workers--; // do not mark P1 as terminated yet
+		if (k == n) {
+			seq_solver(n, all_solns);
+		} else {
+			num_killed_workers--; // do not mark P1 as terminated yet for k=0 case
+		}
 	} else {
 		partials_remaining = generate_partial(assignment, flags, n, k);
-		if (partials_remaining == false) { // immediately zero solutions found (e.g. n=2, k=2)
+		if (!partials_remaining) { // immediately zero solutions found (e.g. n=2, k=2)
 			for (int ii = 1; ii < num_procs; ii++) {
 				MPI_Send(&kill[0], k, MPI_UNSIGNED, ii, 222, MPI_COMM_WORLD);
 				num_killed_workers++;
@@ -105,7 +109,7 @@ void nqueen_master(	unsigned int n,
 		std::vector<unsigned int> assignment; // reset
 		std::vector<unsigned int> flags (5*n-2 , 0); // reset
 		for (int dest = 1; dest < num_procs; dest++) {
-			if (partials_remaining == true) { // if assignment is valid, haven't run out yet
+			if (partials_remaining) { // if assignment is valid, haven't run out yet
 				partials_remaining = generate_partial(assignment, flags, n, k);
 				MPI_Send(&assignment[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
 //				std::cout << "sending initial assignment to " << dest << std::endl;
@@ -119,17 +123,17 @@ void nqueen_master(	unsigned int n,
 
 	MPI_Status stat;
 	MPI_Request req;
-	int test_flag = true;
+	int recv_success = true;
 	std::vector<unsigned int> soln(n);
 	int num_soln;
 
-	while (partials_remaining == true) {
+	while (partials_remaining) {
 		// First receive the soln size from any processor that is ready, access its rank with stat
-		if (test_flag == true) {
+		if (recv_success) {
 			MPI_Irecv(&num_soln, 1, MPI_INT, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &req);
 		}
-		MPI_Test(&req, &test_flag, &stat);
-		if (test_flag == true) { // successful receive
+		MPI_Test(&req, &recv_success, &stat);
+		if (recv_success) { // successful receive
 			// Append to all_solns
 			for (int ii = 0; ii < num_soln; ii++) {
 				MPI_Recv(&soln[0], n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -137,7 +141,7 @@ void nqueen_master(	unsigned int n,
 			}
 			// Immediately send a new assignment
 			partials_remaining = generate_partial(assignment, flags, n, k);
-			if (partials_remaining == true) {
+			if (partials_remaining) {
 				MPI_Send(&assignment[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
 //				std::cout << "\nsending assignment: ";
 				for (unsigned int xx = 0; xx < assignment.size(); xx++) {
