@@ -134,20 +134,30 @@ void nqueen_master(	unsigned int n,
 	MPI_Request req;
 	int recv_success = true;
 	std::vector<unsigned int> soln(n);
-	int num_soln;
+	std::vector<unsigned int> soln_vec;
+	unsigned int num_soln;
 	std::vector<std::vector<unsigned int>> partials_surplus; // implemented like a LIFO queue, order of solutions doesn't matter
 	std::vector<unsigned int> temp(k);
 
 	while ((!found_last || !partials_surplus.empty()) && !skip) {
 		// First receive the soln size from any processor that is ready, access its rank with stat
 		if (recv_success) {
-			MPI_Irecv(&num_soln, 1, MPI_INT, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &req);
+			MPI_Irecv(&num_soln, 1, MPI_UNSIGNED, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &req);
 		}
 		MPI_Test(&req, &recv_success, &stat);
 		if (recv_success) { // successful receive
-			// Append to all_solns
-			for (int ii = 0; ii < num_soln; ii++) {
-				MPI_Recv(&soln[0], n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			soln_vec.resize(num_soln*n);
+			MPI_Recv(&soln_vec[0], num_soln*n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			// Catch bug
+//			if (soln_vec.size() != num_soln*n) {
+//				std::cout << "Solution vector is expected to be size " << num_soln*n << " but is size " << soln_vec.size() << " upon receiving.\n" << std::endl;
+//				for (unsigned int ii = 0; ii < soln_vec.size(); ii++) {
+//					std::cout << soln_vec[ii] << ' ';
+//				}
+//				exit(EXIT_FAILURE);
+//			}
+			for (unsigned int ii = 0; ii < num_soln; ii++) {
+				soln.assign(soln_vec.begin()+n*ii, soln_vec.begin()+n*(ii+1)-1);
 				all_solns.push_back(soln);
 			}
 			// Immediately send a new assignment
@@ -183,9 +193,11 @@ void nqueen_master(	unsigned int n,
 
 	// Retrieve solutions from remaining workers and kill
 	while (num_killed_workers != num_procs-1) {
-		MPI_Recv(&num_soln, 1, MPI_INT, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &stat);
-		for (int ii = 0; ii < num_soln; ii++) {
-			MPI_Recv(&soln[0], n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		MPI_Recv(&num_soln, 1, MPI_UNSIGNED, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &stat);
+		soln_vec.resize(num_soln*n);
+		MPI_Recv(&soln_vec[0], num_soln*n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		for (unsigned int ii = 0; ii < num_soln; ii++) {
+			soln.assign(soln_vec.begin()+n*ii, soln_vec.begin()+n*(ii+1)-1);
 			all_solns.push_back(soln);
 		}
 		if (k != 0) { // P1 terminates itself for k=0 case, do not send kill signal
@@ -205,7 +217,11 @@ void nqueen_worker(	unsigned int n,
 
 	std::vector<unsigned int> assignment(k);
 	std::vector<unsigned int> kill(k,n); // assume all processors agree on what the kill signal is
+	std::vector<std::vector<unsigned int>> all_solns;
+	std::vector<unsigned int> partial_solns(k);
+	std::vector<unsigned int> soln_vec;
 	bool fin = false;
+	unsigned int num_solns;
 
 	while (fin == false) {
 		// Receive the assignment from P0
@@ -224,20 +240,44 @@ void nqueen_worker(	unsigned int n,
 			row++;
 		}
 
-		// Calculate the remaining solution and store all solutions found in all_solns
+		// Calculate the remaining solution and store all solutions found in all_soln
 		std::vector<std::vector<unsigned int>> all_solns;
 		std::vector<unsigned int> partial_solns(k);
 		partial_solns = assignment;
 		seq_solver_backtrack(all_solns, partial_solns, flags, row, n, n, true);
+//		std::cout << "\nNUM SOL FOUND: " << all_solns.size() << std::endl;
 
 		// Tell P0 how many solutions to expect
-		int num_solns = all_solns.size();
-		MPI_Send(&num_solns, 1, MPI_INT, 0, 111, MPI_COMM_WORLD);
+		num_solns = all_solns.size();
+		MPI_Send(&num_solns, 1, MPI_UNSIGNED, 0, 111, MPI_COMM_WORLD);
+
+		// Concatenate all these solutions to send a single vector to P0
+		soln_vec.clear();
+		for (unsigned int ii = 0; ii < num_solns; ii++) {
+			if (soln_vec.empty()) {
+				soln_vec = all_solns[ii];
+			} else {
+				soln_vec.insert(soln_vec.end(), all_solns[ii].begin(), all_solns[ii].end());
+//				soln_vec.insert(soln_vec.end(), std::make_move_iterator(all_solns[ii].begin()), std::make_move_iterator(all_solns[ii].end()));
+//				std::move(std::begin(all_solns[ii]), std::end(all_solns[ii]), std::back_inserter(soln_vec));
+//				std::copy(std::begin(all_solns[ii]), std::end(all_solns[ii]), std::back_inserter(soln_vec));
+			}
+
+		}
+
+		// Catch bug
+//		if 	(soln_vec.size() != num_solns * n) {
+//			std::cout << "Solution vector is expected to be size " << n*num_solns << " but is size " << soln_vec.size() << " upon sending." << std::endl;
+//			exit(EXIT_FAILURE);
+//		} else {
+//			std::cout << "\nSending concat solutions: " << std::endl;
+//			for (unsigned int ii = 0; ii < num_solns * n; ii++) {
+//				std::cout << soln_vec[ii] << ' ';
+//			}
+//		}
 
 		// Send these solutions
-		for (int ii = 0; ii < num_solns; ii++) {
-			MPI_Send(&all_solns[ii][0], n, MPI_UNSIGNED, 0, 222, MPI_COMM_WORLD);
-		}
+		MPI_Send(&soln_vec[0], num_solns*n, MPI_UNSIGNED, 0, 222, MPI_COMM_WORLD);
 
 		// Terminate itself if k=0
 		if (k == 0) {
