@@ -71,53 +71,65 @@ void seq_solver_backtrack(std::vector<std::vector<unsigned int> >& all_solns,
 void nqueen_master(	unsigned int n,
 					unsigned int k,
 					std::vector<std::vector<unsigned int> >& all_solns) {
+
 	int num_procs; // total number of procs in the world
 	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
-	std::vector<unsigned int> kill(k,0); // assume all processors agree on what the kill signal is
-//	unsigned int size_tag = 111;
-//	unsigned int sol_tag = 222;
-
-	// Generate the first partial solution
-	std::vector<unsigned int> assignment(k,0);
+	std::vector<unsigned int> kill(k,n); // assume all processors agree on what the kill signal is
+	std::vector<unsigned int> assignment;
+	assignment.reserve(k);
 	std::vector<unsigned int> flags (5*n-2 , 0);
 	int num_killed_workers = 0;
 	bool partials_remaining;
 
-	partials_remaining = generate_partial(assignment, flags, n, k);
-	if (partials_remaining == false) { // immediately no solutions found (e.g. n=2)
-		for (int ii = 1; ii < num_procs-1; ii++) {
+	// Handle cases where excess workers can immediately be killed
+	if (k == 0) { // only 1 worker needed
+		for (int ii = 1; ii < num_procs; ii++) {
+			// for k=0 case, P1 will interpret kill signal differently: will produce full solutions then terminate itself
 			MPI_Send(&kill[0], k, MPI_UNSIGNED, ii, 222, MPI_COMM_WORLD);
 			num_killed_workers++;
+			partials_remaining = false;
 		}
-		return;
-	}
+		num_killed_workers--; // do not mark P1 as terminated yet
+	} else {
+		partials_remaining = generate_partial(assignment, flags, n, k);
+		if (partials_remaining == false) { // immediately zero solutions found (e.g. n=2, k=2)
+			for (int ii = 1; ii < num_procs; ii++) {
+				MPI_Send(&kill[0], k, MPI_UNSIGNED, ii, 222, MPI_COMM_WORLD);
+				num_killed_workers++;
+			}
+			return;
+		}
 
-	for (int dest = 1; dest < num_procs; dest++) {
-		if (partials_remaining == true) { // if assignment is valid, haven't run out yet
-			MPI_Send(&assignment[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
-//			for (int ii = 0; ii < assignment.size(); ii++) {
-//				std::cout << assignment[ii] << std::endl;
-//			}
-//			std::cout << "sending initial assignment to" << dest << std::endl;
-			partials_remaining = generate_partial(assignment, flags, n, k);
-		} else { // there are fewer partial solutions than there are workers, none left
-			MPI_Send(&kill[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
-//			std::cout << "killed processor" << dest << std::endl;
-			num_killed_workers++;
+		// Generate the initial partial solutions and distribute
+		partials_remaining = true;
+		std::vector<unsigned int> assignment; // reset
+		std::vector<unsigned int> flags (5*n-2 , 0); // reset
+		for (int dest = 1; dest < num_procs; dest++) {
+			if (partials_remaining == true) { // if assignment is valid, haven't run out yet
+				partials_remaining = generate_partial(assignment, flags, n, k);
+				MPI_Send(&assignment[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
+//				std::cout << "sending initial assignment to " << dest << std::endl;
+			} else { // there are fewer partial solutions than there are workers, none left
+				MPI_Send(&kill[0], k, MPI_UNSIGNED, dest, 222, MPI_COMM_WORLD);
+//				std::cout << "killed processor" << dest << std::endl;
+				num_killed_workers++;
+			}
 		}
 	}
 
 	MPI_Status stat;
 	MPI_Request req;
-	int test_flag;
+	int test_flag = true;
 	std::vector<unsigned int> soln(n);
 	int num_soln;
 
 	while (partials_remaining == true) {
 		// First receive the soln size from any processor that is ready, access its rank with stat
-		MPI_Irecv(&num_soln, 1, MPI_INT, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &req);
+		if (test_flag == true) {
+			MPI_Irecv(&num_soln, 1, MPI_INT, MPI_ANY_SOURCE, 111, MPI_COMM_WORLD, &req);
+		}
 		MPI_Test(&req, &test_flag, &stat);
-		if (test_flag == 1) { // successful receive
+		if (test_flag == true) { // successful receive
 			// Append to all_solns
 			for (int ii = 0; ii < num_soln; ii++) {
 				MPI_Recv(&soln[0], n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -127,10 +139,11 @@ void nqueen_master(	unsigned int n,
 			partials_remaining = generate_partial(assignment, flags, n, k);
 			if (partials_remaining == true) {
 				MPI_Send(&assignment[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
-//				std::cout << "\nsending assignment ";
-//				for (int xx = 0; xx < assignment.size(); xx++) {
-//					std::cout << assignment[xx] << ' ';
-//				}
+//				std::cout << "\nsending assignment: ";
+				for (unsigned int xx = 0; xx < assignment.size(); xx++) {
+					std::cout << assignment[xx] << ' ';
+				}
+				std::cout << ' ' << std::endl;
 			} else {
 				MPI_Send(&kill[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
 				num_killed_workers++;
@@ -149,7 +162,9 @@ void nqueen_master(	unsigned int n,
 			MPI_Recv(&soln[0], n, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			all_solns.push_back(soln);
 		}
-		MPI_Send(&kill[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
+		if (k != 0) { // P1 terminates itself for k=0 case, do not send kill signal
+			MPI_Send(&kill[0], k, MPI_UNSIGNED, stat.MPI_SOURCE, 222, MPI_COMM_WORLD);
+		}
 		num_killed_workers++;
 	}
 
@@ -159,22 +174,22 @@ void nqueen_master(	unsigned int n,
 void nqueen_worker(	unsigned int n,
 					unsigned int k) {
 
-//	int proc_id;
-//	MPI_Comm_rank(MPI_COMM_WORLD, &proc_id);
+	int proc_id;
+	MPI_Comm_rank(MPI_COMM_WORLD, &proc_id);
 
 	std::vector<unsigned int> assignment(k);
-	std::vector<unsigned int> kill(k,0); // assume all processors agree on what the kill signal is
-//	unsigned int size_tag = 111;
-//	unsigned int sol_tag = 222;
+	std::vector<unsigned int> kill(k,n); // assume all processors agree on what the kill signal is
 	bool fin = false;
 
 	while (fin == false) {
 		// Receive the assignment from P0
 		MPI_Recv(&assignment[0], k, MPI_UNSIGNED, 0, 222, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		if (assignment == kill) {
+		if (assignment == kill && k != 0) {
 			fin = true;
 			continue;
 		}
+
+//		std::cout << "processor " << proc_id << " has received and will complete assignment" << std::endl;
 
 		// Populate flags with known information from the assignment
 		int row = 0;
@@ -193,12 +208,18 @@ void nqueen_worker(	unsigned int n,
 
 		// Tell P0 how many solutions to expect
 		int num_solns = all_solns.size();
+//		std::cout << "found " << num_solns << " solutions from processor " << proc_id << std::endl;
 		MPI_Send(&num_solns, 1, MPI_INT, 0, 111, MPI_COMM_WORLD);
 
 		// Send these solutions
 //		std::cout << "sending " << num_solns << " solutions from " << proc_id << std::endl;
 		for (int ii = 0; ii < num_solns; ii++) {
 			MPI_Send(&all_solns[ii][0], n, MPI_UNSIGNED, 0, 222, MPI_COMM_WORLD);
+		}
+
+		// Terminate itself if k=0
+		if (k == 0) {
+			fin = true;
 		}
 	}
 	return;
@@ -212,14 +233,25 @@ bool generate_partial(std::vector<unsigned int> &soln,
 					   std::vector<unsigned int> &flags,
 					   unsigned int n,
 					   unsigned int k) {
+	// Catch bugs
+	if (k == 0) {
+		std::cout << "Error: Input value for k is invalid. Must be greater than 0." << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
 	// Handle base case, find the first partial solution
-	std::vector<unsigned int> empty(k,0);
-	if (soln == empty) {
+	if (soln.empty()) {
 		std::vector<unsigned int> partial_soln;
 		std::vector<std::vector<unsigned int>> first_soln;
 		seq_solver_backtrack(first_soln, partial_soln, flags, 0, n, k, false);
 		soln = first_soln[0];
 		return true;
+	}
+
+	// Catch bugs
+	if (soln.size() != k) {
+		std::cout << "Error: Size of previous solution input to generate_partial() is " << soln.size() << ". Expected size is " << k << std::endl;
+		exit(EXIT_FAILURE);
 	}
 
 	// Clear the flag from the previous solution
